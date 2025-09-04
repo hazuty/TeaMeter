@@ -8,7 +8,8 @@ const STEP = 100;
 const MILESTONES = Array.from({ length: GOAL / STEP + 1 }, (_, i) => i * STEP);
 
 // ====== Images configuration ======
-const DRAGONS_BASE = "/dragons-team-hazut";
+// חשוב: נתיב יחסי (ללא "/" בתחילת הנתיב) כדי שיעבוד מתת-נתיב ב-GitHub Pages
+const DRAGONS_BASE = "dragons-team-hazut";
 const DRAGON_EXT = "png"; // אם תהפוך ל-WebP, שנה ל-"webp"
 const USE_STAGE_NAMING = false;
 
@@ -148,13 +149,13 @@ export default function TeamworkMeter() {
   const [soundEnabled, setSoundEnabled] = useState(false);
 
   useEffect(() => {
-    // טוען קבצי MP3 מתוך public/sounds
-    const a1 = new Audio("/sounds/add-point.mp3");
+    // טוען קבצי MP3 מתוך public/sounds — נתיב יחסי!
+    const a1 = new Audio("sounds/add-point.mp3");
     a1.preload = "auto";
     a1.volume = 0.7;
     addSoundRef.current = a1;
 
-    const a2 = new Audio("/sounds/milestone.mp3");
+    const a2 = new Audio("sounds/milestone.mp3");
     a2.preload = "auto";
     a2.volume = 0.9;
     milestoneSoundRef.current = a2;
