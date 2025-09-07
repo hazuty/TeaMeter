@@ -2,6 +2,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
+// ===== Firebase (שמירה אוטומטית לענן) =====
+import { db } from "./firebase";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+
 // ====== Game config ======
 const GOAL = 1000;
 const STEP = 100;
@@ -126,6 +130,16 @@ function SoundControls({ unlockAudio, safePlay, soundEnabled, addSoundRef }) {
 }
 
 export default function TeamworkMeter() {
+  // מזהה "קבוצה/משפחה" – נשמר בלוקאל; אפשר להחליף לשם קבוע
+  const [teamId] = useState(() => {
+    const k = "tm_team_id";
+    const existing = localStorage.getItem(k);
+    if (existing) return existing;
+    const generated = "family-" + Math.random().toString(36).slice(2, 8);
+    localStorage.setItem(k, generated);
+    return generated;
+  });
+
   const [points, setPoints] = useLocalStorage("tm_points", 0);
   const [log, setLog] = useLocalStorage("tm_log", []);
   const [manualDelta, setManualDelta] = useState(0); // decrease
@@ -222,11 +236,57 @@ export default function TeamworkMeter() {
       setCoOpTriggered(false);
     }
     return () => clearTimeout(holdTimer.current);
-  }, [leftDown, rightDown, selectedBoost, coOpTriggered]);
+  }, [leftDown, rightDown, selectedBoost, coOpTriggered]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ====== טעינה חד-פעמית מהענן בפעם הראשונה ======
+  useEffect(() => {
+    (async () => {
+      try {
+        const ref = doc(db, "teams", teamId);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data();
+          if (typeof data.points === "number") setPoints(data.points);
+          if (Array.isArray(data.log)) setLog(data.log);
+          if (typeof data.rewardNote === "string") setRewardNote(data.rewardNote);
+        }
+      } catch (e) {
+        console.warn("Load from cloud failed:", e);
+      }
+    })();
+    // חשוב: לא להוסיף setPoints/setLog לתלות כדי לא ליצור לולאה
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
+
+  // ====== שמירה אוטומטית לענן (עם debounce עדין) ======
+  const saveTimer = useRef(null);
+  useEffect(() => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        const ref = doc(db, "teams", teamId);
+        await setDoc(
+          ref,
+          {
+            points,
+            log,
+            rewardNote,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        // console.debug("Auto-saved");
+      } catch (e) {
+        console.warn("Auto-save failed:", e);
+      }
+    }, 800); // שומר 0.8 שניות אחרי שינוי אחרון
+    return () => clearTimeout(saveTimer.current);
+  }, [teamId, points, log, rewardNote]);
 
   return (
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-black text-amber-200 font-serif p-4 sm:p-8">
-      <h1 className="text-3xl font-extrabold mb-6 text-center tracking-widest drop-shadow-[0_0_10px_#facc15]">כוח הצוות – מד שיתוף פעולה</h1>
+      <h1 className="text-3xl font-extrabold mb-1 text-center tracking-widest drop-shadow-[0_0_10px_#facc15]">כוח הצוות – מד שיתוף פעולה</h1>
+      <div className="text-center text-sm text-amber-400 mb-5">מזהה קבוצה: <span className="font-mono">{teamId}</span></div>
 
       <div className="text-center mb-3 text-amber-300">הושגו <span dir="ltr">{points}</span> נק׳ מתוך <span dir="ltr">{GOAL}</span></div>
 
@@ -322,7 +382,7 @@ export default function TeamworkMeter() {
       </div>
 
       {/* Change log */}
-      <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-5">
+      <div className="bg-gray-800/70 rounded-2ל border border-amber-500 p-5">
         <div className="mb-2 text-amber-300">יומן שינויים</div>
         <ul className="space-y-1 max-h-56 overflow-auto pr-1">
           {log.map((entry, i) => (
