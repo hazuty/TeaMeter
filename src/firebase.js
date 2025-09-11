@@ -4,7 +4,7 @@ import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
 // ⚠️ בדיוק כפי שמופיע אצלך בקונסול (מהצילום שהבאת)
 const firebaseConfig = {
-  apiKey: "AIzaSyA_gdKvRR1llPu5ivzj_DgvdJ_1gbgzG1A",
+  apiKey: "AIzaSyC8L396tOd0Gh7DhB7ekz1qF8BqVoVZ5XE",
   authDomain: "teameter-562a1.firebaseapp.com",
   projectId: "teameter-562a1",
   storageBucket: "teameter-562a1.firebasestorage.app",
