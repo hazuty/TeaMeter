@@ -1,8 +1,11 @@
-// src/firebase.js
+// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
-// === הקונפיג שלך (בדיוק כפי שסיפקת) ===
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyA_gdKvRRlllPu5ivzj_DgvdJ_1gbgzG1A",
   authDomain: "teameter-562a1.firebaseapp.com",
@@ -10,11 +13,9 @@ const firebaseConfig = {
   storageBucket: "teameter-562a1.firebasestorage.app",
   messagingSenderId: "1061485896783",
   appId: "1:1061485896783:web:869c2875682fa24cb0763a",
-  // measurementId לא חובה לסנכרון; אפשר להשאיר מחוץ לקובץ
+  measurementId: "G-0WWWS7X7SJ"
 };
 
-export const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
-
-// אופציונלי: עבודה גם כשהמכשיר אופליין (מסתנכרן כשחוזרים)
-enableIndexedDbPersistence(db).catch(() => {});
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
