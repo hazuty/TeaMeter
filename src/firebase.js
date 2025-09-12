@@ -1,18 +1,12 @@
 // src/firebase.js
-// את הקובץ הזה מדביקים *בדיוק* כך ומחליפים את הקיים.
-
-// Firebase core
 import { initializeApp } from "firebase/app";
-
-// Firestore – API החדש לאופליין/מטמון
 import {
   initializeFirestore,
   persistentLocalCache,
-  persistentMultipleTabManager, // אופציונלי – תמיכה במספר טאבים פתוחים
-  // memoryLocalCache,            // אם תרצה לבטל אופליין ולהישאר בזיכרון בלבד
+  persistentMultipleTabManager,
+  // memoryLocalCache, // אם תרצה לבטל אופליין – החלף לשורה הזו
 } from "firebase/firestore";
 
-// ⚠️ זה המפתח החדש שנתת
 const firebaseConfig = {
   apiKey: "AIzaSyC8L396tOd0Gh7DhB7ekz1qF8BqVoVZ5XE",
   authDomain: "teameter-562a1.firebaseapp.com",
@@ -24,12 +18,12 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 
-// הגדרת Firestore עם מטמון מתמשך (מחליף את enableIndexedDbPersistence)
+// אופליין (API חדש, בלי האזהרת deprecation)
 export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager(), // אפשר להסיר אם לא צריך ריבוי טאבים
+    tabManager: persistentMultipleTabManager(),
   }),
 });
 
-// אם תרצה לבטל אופליין לחלוטין ולהסיר מטמון:
+// אם לא רוצים אופליין בכלל:
 // export const db = initializeFirestore(app, { localCache: memoryLocalCache() });
