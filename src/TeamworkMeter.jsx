@@ -194,30 +194,49 @@ export default function TeamworkMeter() {
   const localPct = STEP === 0 ? 0 : Math.round(((points % STEP) / STEP) * 100);
 
   // ===== Cloud realtime =====
-  // לא שומרים עד שהושלמה טעינה ראשונה מהענן
-  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);          // נשחרר autosave רק אחרי סנאפשוט מהשרת
   const applyingRemote = useRef(false);
+  const firstServerSync = useRef(false);                        // חדש: זיהוי סנאפשוט מהשרת (לא מה-cache)
 
-  // Listener (מושך עדכונים)
   useEffect(() => {
     if (!teamId) return;
     const ref = doc(db, "teams", teamId);
-    const unsub = onSnapshot(ref, (snap) => {
-      applyingRemote.current = true;
-      if (snap.exists()) {
-        const data = snap.data();
-        if (typeof data.points === "number") setPoints(data.points);
-        if (Array.isArray(data.log)) setLog(data.log);
-        if (typeof data.rewardNote === "string") setRewardNote(data.rewardNote);
-      }
-      if (!cloudReady) setCloudReady(true);
-      setTimeout(() => { applyingRemote.current = false; }, 50);
-    }, (err) => console.warn("Snapshot error:", err));
+
+    // מזהים סנאפשוט מהשרת (ולא רק מה-cache) לפני שמאפשרים שמירה
+    const unsub = onSnapshot(
+      ref,
+      { includeMetadataChanges: true },
+      (snap) => {
+        // אם עדיין לא קיבלנו סנאפשוט מהשרת – וזו רק תוצאת cache – מתעלמים
+        if (!firstServerSync.current && snap.metadata.fromCache) {
+          return;
+        }
+
+        // מכאן זה או מהשרת, או שכבר היה סנכרון ראשון
+        firstServerSync.current = true;
+
+        applyingRemote.current = true;
+
+        if (snap.exists()) {
+          const data = snap.data();
+          if (typeof data.points === "number") setPoints(data.points);
+          if (Array.isArray(data.log)) setLog(data.log);
+          if (typeof data.rewardNote === "string") setRewardNote(data.rewardNote);
+        }
+
+        // מתירים autosave רק אחרי שנגעו בשרת
+        if (!cloudReady) setCloudReady(true);
+
+        setTimeout(() => { applyingRemote.current = false; }, 50);
+      },
+      (err) => console.warn("Snapshot error:", err)
+    );
+
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId]);
 
-  // Auto-save (דחוי) – לא בזמן יישום עדכון מרחוק ולא לפני טעינה ראשונה
+  // Auto-save (דחוי) – לא בזמן יישום עדכון מרחוק ולא לפני טעינה ראשונה מהשרת
   const saveTimer = useRef(null);
   useEffect(() => {
     if (!uid || !teamId || !cloudReady || applyingRemote.current) return;
@@ -225,7 +244,13 @@ export default function TeamworkMeter() {
     saveTimer.current = setTimeout(async () => {
       try {
         const ref = doc(db, "teams", teamId);
-        await setDoc(ref, { points, log, rewardNote, updatedAt: serverTimestamp(), members: arrayUnion(uid) }, { merge: true });
+        await setDoc(ref, {
+          points,
+          log,
+          rewardNote,
+          updatedAt: serverTimestamp(),
+          members: arrayUnion(uid),
+        }, { merge: true });
       } catch (e) {
         console.warn("Auto-save failed:", e);
       }
@@ -258,12 +283,22 @@ export default function TeamworkMeter() {
     if (uid && teamId && cloudReady) {
       try {
         const ref = doc(db, "teams", teamId);
-        await updateDoc(ref, { points: increment(applied), updatedAt: serverTimestamp(), members: arrayUnion(uid) });
+        await updateDoc(ref, {
+          points: increment(applied),
+          updatedAt: serverTimestamp(),
+          members: arrayUnion(uid),
+        });
       } catch {
         // אם המסמך עוד לא קיים – ניצור אותו
         try {
           const ref = doc(db, "teams", teamId);
-          await setDoc(ref, { points: next, log, rewardNote, updatedAt: serverTimestamp(), members: arrayUnion(uid) }, { merge: true });
+          await setDoc(ref, {
+            points: next,
+            log,
+            rewardNote,
+            updatedAt: serverTimestamp(),
+            members: arrayUnion(uid),
+          }, { merge: true });
         } catch (e) {
           console.warn("Immediate update failed:", e);
         }
@@ -290,7 +325,7 @@ export default function TeamworkMeter() {
 
   return (
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-black text-amber-200 font-serif p-4 sm:p-8">
-      <h1 className="text-3xl font-extrabold mb-1 text-center tracking-widest drop-shadow-[0_0_10px_#facc15]">כוח הצוות – מד שיתוף פעולה</h1>
+      <h1 className="text-3xl font-extrabולד mb-1 text-center tracking-widest drop-shadow-[0_0_10px_#facc15]">כוח הצוות – מד שיתוף פעולה</h1>
 
       <div className="text-center text-sm text-amber-400 mb-5">
         מזהה קבוצה: <span className="font-mono">{teamId}</span>
@@ -314,8 +349,8 @@ export default function TeamworkMeter() {
       </div>
 
       {/* Main progress bar */}
-      <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-5 mb-4">
-        <div className="flex items-center justify-between mb-2">
+      <div className="bg_GRAY-800/70 rounded-2xl border border-amber-500 p-5 mb-4">
+        <div className="flex items-center justify_between mb-2">
           <div>התקדמות כוללת</div>
           <div className="font-semibold"><span dir="ltr">{points} / {GOAL}</span> נק׳ ({progressPct}%)</div>
         </div>
@@ -371,7 +406,7 @@ export default function TeamworkMeter() {
 
       {/* Controls */}
       <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-5 mb-6">
-        <div className="flex flex-wrap gap-2 mb-3">
+        <div className="flex flex_wrap gap-2 mb-3">
           <button onClick={() => setConfirm({ type: 'reset' })} className="rounded-xl px-4 py-2 bg-gray-700 text-amber-200 border border-amber-500 hover:bg-gray-600">איפוס</button>
         </div>
         <div className="flex flex-wrap items-center gap-2">

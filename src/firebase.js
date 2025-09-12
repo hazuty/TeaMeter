@@ -4,7 +4,7 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
-  // memoryLocalCache, // אם תרצה לבטל אופליין – החלף לשורה הזו
+  // memoryLocalCache, // אם תרצה לבטל אופליין – אפשר להחליף לשורה הזו
 } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -18,7 +18,7 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 
-// אופליין (API חדש, בלי האזהרת deprecation)
+// אופליין (API חדש, בלי אזהרת deprecation)
 export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),
