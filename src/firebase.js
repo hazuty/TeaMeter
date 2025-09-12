@@ -2,9 +2,9 @@
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
-  // memoryLocalCache, // אם תרצה לבטל אופליין – אפשר להחליף לשורה הזו
+  // persistentLocalCache,               // ⛔️ מכבים כרגע כדי לעקוף את השגיאה
+  // persistentMultipleTabManager,
+  memoryLocalCache,                     // ✅ פתרון יציב ללא IndexedDB
 } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -18,12 +18,15 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 
-// אופליין (API חדש, בלי אזהרת deprecation)
+// ✅ מפעילים Firestore עם קאש בזיכרון בלבד (ללא IndexedDB).
+// זה עוקף את ה-INTERNAL ASSERTION שנתקלנו בו בפרודקשן.
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager(),
-  }),
+  localCache: memoryLocalCache(),
 });
 
-// אם לא רוצים אופליין בכלל:
-// export const db = initializeFirestore(app, { localCache: memoryLocalCache() });
+/*
+אם נרצה להחזיר אופליין בהמשך, נבדוק שהבעיה נעלמה ואז נעבור חזרה ל:
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
+*/
