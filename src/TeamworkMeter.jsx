@@ -20,8 +20,8 @@ const GOAL = 1000;
 const STEP = 100;
 const MILESTONES = Array.from({ length: GOAL / STEP + 1 }, (_, i) => i * STEP);
 
-// ====== Assets base (עובד גם לוקאלית וגם ב-GitHub Pages) ======
-const ASSET_BASE = import.meta.env.BASE_URL || "/"; // "/" בלוקאל, "/TeaMeter/" בפרוד (כשמוגדר ב-vite.config.js)
+// ====== Assets base (לוקאל + GitHub Pages) ======
+const ASSET_BASE = import.meta.env.BASE_URL || "/"; // "/" בלוקאל, "/TeaMeter/" בפרוד
 const DRAGONS_BASE = `${ASSET_BASE}dragons-team-hazut`;
 const SOUNDS_BASE = `${ASSET_BASE}sounds`;
 const DRAGON_EXT = "png";
@@ -281,6 +281,10 @@ export default function TeamworkMeter() {
 
   const holdTimer = useRef(null);
 
+  // ===== Rewards table state =====
+  const [rewards, setRewards] = useState({}); // {"100": {reward:"", owner:""}, ...}
+  const rewardsDirtyRef = useRef(false);
+
   // ===== Sounds =====
   const addSoundRef = useRef(null);
   const milestoneSoundRef = useRef(null);
@@ -313,10 +317,10 @@ export default function TeamworkMeter() {
   const localPct = STEP === 0 ? 0 : Math.round(((points % STEP) / STEP) * 100);
 
   // ===== Cloud realtime =====
-  const [cloudReady, setCloudReady] = useState(false); // נשחרר autosave רק אחרי סנאפשוט מהשרת
+  const [cloudReady, setCloudReady] = useState(false); // נפתח autosave רק אחרי סנאפשוט מהשרת
   const applyingRemote = useRef(false);
   const firstServerSync = useRef(false); // מזהה סנכרון ראשון
-  const rewardDirtyRef = useRef(false); // עוקב אם rewardNote הוקלד לפני cloudReady
+  const rewardDirtyRef = useRef(false); // אם rewardNote הוקלד לפני cloudReady
 
   useEffect(() => {
     if (!teamId) return;
@@ -337,6 +341,7 @@ export default function TeamworkMeter() {
           if (typeof data.points === "number") setPoints(data.points);
           if (Array.isArray(data.log)) setLog(data.log);
           if (typeof data.rewardNote === "string") setRewardNote(data.rewardNote);
+          if (data.rewards && typeof data.rewards === "object") setRewards(data.rewards);
         }
 
         if (!cloudReady) setCloudReady(true);
@@ -350,7 +355,7 @@ export default function TeamworkMeter() {
     return unsub;
   }, [teamId, cloudReady, setPoints, setLog]);
 
-  // Auto-save דחוי (לא בזמן החלת עדכון מרחוק ולא לפני טעינה ראשונה)
+  // Auto-save דחוי: מעדכנים points + rewardNote בלבד (לא דורכים על log שנכתב עם arrayUnion)
   const saveTimer = useRef(null);
   useEffect(() => {
     if (!uid || !teamId || !cloudReady || applyingRemote.current) return;
@@ -362,7 +367,6 @@ export default function TeamworkMeter() {
           ref,
           {
             points,
-            log,
             rewardNote,
             updatedAt: serverTimestamp(),
             members: arrayUnion(uid),
@@ -374,9 +378,9 @@ export default function TeamworkMeter() {
       }
     }, 800);
     return () => clearTimeout(saveTimer.current);
-  }, [uid, teamId, points, log, rewardNote, cloudReady]);
+  }, [uid, teamId, points, rewardNote, cloudReady]);
 
-  // שמירת תגמול אם הוקלד לפני cloudReady
+  // שמירת rewardNote אם הוקלד לפני cloudReady
   useEffect(() => {
     if (!uid || !teamId || !cloudReady) return;
     if (!rewardDirtyRef.current) return;
@@ -395,6 +399,26 @@ export default function TeamworkMeter() {
     })();
   }, [cloudReady, uid, teamId, rewardNote]);
 
+  // שמירת טבלת תגמולים (דבונס)
+  useEffect(() => {
+    if (!uid || !teamId || !cloudReady) return;
+    if (!rewardsDirtyRef.current) return;
+    const t = setTimeout(async () => {
+      try {
+        const ref = doc(db, "teams", teamId);
+        await setDoc(
+          ref,
+          { rewards, updatedAt: serverTimestamp(), members: arrayUnion(uid) },
+          { merge: true }
+        );
+        rewardsDirtyRef.current = false;
+      } catch (e) {
+        console.warn("Save rewards failed:", e);
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [uid, teamId, cloudReady, rewards]);
+
   // ===== Game logic =====
   const changePoints = async (delta) => {
     if (!Number.isFinite(delta) || delta === 0) return;
@@ -406,36 +430,42 @@ export default function TeamworkMeter() {
 
     if (applied > 0) safePlay(addSoundRef);
 
+    // רשומת יומן
+    const entry = { delta: applied, newTotal: next, ts: Date.now() };
+
+    // אבני דרך שחצינו
     const crossed = [];
     if (STEP > 0) {
       const fromIdx = Math.floor(prev / STEP) + 1;
       const toIdx = Math.floor(next / STEP);
       for (let i = fromIdx; i <= toIdx; i++) crossed.push(i * STEP);
     }
+
+    // עדכון לוקאלי מיידי
     setPoints(next);
-    setLog((p) => [{ delta: applied, newTotal: next, ts: Date.now() }, ...p].slice(0, 100));
+    setLog((p) => [entry, ...p].slice(0, 100));
     if (crossed.length > 0) {
       safePlay(milestoneSoundRef);
       setCelebrating(crossed[0]);
     }
 
-    // כתיבה אטומית לשרת
+    // כתיבה אטומית + עדכון לוג בענן
     if (uid && teamId && cloudReady) {
+      const ref = doc(db, "teams", teamId);
       try {
-        const ref = doc(db, "teams", teamId);
         await updateDoc(ref, {
           points: increment(applied),
+          log: arrayUnion(entry),
           updatedAt: serverTimestamp(),
           members: arrayUnion(uid),
         });
       } catch {
         try {
-          const ref = doc(db, "teams", teamId);
           await setDoc(
             ref,
             {
               points: next,
-              log,
+              log: [entry],
               rewardNote,
               updatedAt: serverTimestamp(),
               members: arrayUnion(uid),
@@ -476,6 +506,14 @@ export default function TeamworkMeter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leftDown, rightDown, selectedBoost, coOpTriggered]);
 
+  // טקסט תגמול לאבן הדרך הקרובה (טבלת תגמולים ← fallback לשדה הישן)
+  const nextRewardText =
+    (rewards?.[String(nextMilestone)]?.reward?.trim?.()
+      ? rewards[String(nextMilestone)].reward.trim()
+      : "") ||
+    (rewardNote && rewardNote.trim()) ||
+    "—";
+
   return (
     <div
       dir="rtl"
@@ -502,7 +540,7 @@ export default function TeamworkMeter() {
         )}
       </AnimatePresence>
 
-      {/* 🟢 Cooperation buttons — כפות (הועברו לכאן) */}
+      {/* 🟢 Cooperation buttons — כפות (מתחת לתמונה, מעל "עד היעד הבא") */}
       <div className="flex flex-col items-center gap-2 mb-4">
         <div className="flex justify-center gap-10 select-none">
           {/* LEFT: ARBEL */}
@@ -568,12 +606,10 @@ export default function TeamworkMeter() {
           />
         </div>
 
-        {/* תגמול קרוב – מוצג מתחת למד */}
+        {/* תגמול לאבן הדרך הקרובה */}
         <div className="mt-2 text-sm text-amber-200">
           תגמול באבן הדרך הקרובה:{" "}
-          <span className="font-semibold">
-            {rewardNote && rewardNote.trim() ? rewardNote : "—"}
-          </span>
+          <span className="font-semibold">{nextRewardText}</span>
         </div>
       </div>
 
@@ -659,6 +695,7 @@ export default function TeamworkMeter() {
             onChange={(e) => setManualAdd(Number(e.target.value || 0))}
             className="w-24 rounded-xl border border-amber-500/60 bg-gray-900 text-amber-100 px-2 py-1 text-right"
           />
+        <div className="hidden" />
           <button
             onClick={() => {
               if (manualAdd > 0 && manualAddReady) {
@@ -692,6 +729,56 @@ export default function TeamworkMeter() {
           placeholder="לדוגמה – חטיף, זמן משחק..."
           className="w-60 rounded-xl border border-amber-500/60 bg-gray-900 text-amber-100 px-3 py-2 text-right"
         />
+      </div>
+
+      {/* Rewards Table (לפני היומן) */}
+      <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-4 mb-5">
+        <div className="mb-2 text-amber-300">טבלת תגמולים לפי אבני דרך</div>
+        <div className="grid grid-cols-[80px_1fr_140px] gap-2 items-center text-sm">
+          <div className="text-amber-400 font-semibold">אבן דרך</div>
+          <div className="text-amber-400 font-semibold">תגמול</div>
+          <div className="text-amber-400 font-semibold">אחראי</div>
+
+          {MILESTONES.filter((m) => m > 0).map((m) => {
+            const key = String(m);
+            const row = rewards?.[key] || {};
+            return (
+              <React.Fragment key={m}>
+                <div className="text-amber-200" dir="ltr">
+                  {m}
+                </div>
+                <input
+                  type="text"
+                  value={row.reward ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRewards((prev) => ({
+                      ...prev,
+                      [key]: { ...prev[key], reward: v || "" },
+                    }));
+                    rewardsDirtyRef.current = true;
+                  }}
+                  placeholder="לדוגמה: סרט/חטיף/טיול קטן"
+                  className="w-full rounded-xl border border-amber-500/40 bg-gray-900 text-amber-100 px-3 py-1"
+                />
+                <input
+                  type="text"
+                  value={row.owner ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRewards((prev) => ({
+                      ...prev,
+                      [key]: { ...prev[key], owner: v || "" },
+                    }));
+                    rewardsDirtyRef.current = true;
+                  }}
+                  placeholder="לדוגמה: אבא / אמא / שניכם"
+                  className="w-full rounded-xl border border-amber-500/40 bg-gray-900 text-amber-100 px-3 py-1"
+                />
+              </React.Fragment>
+            );
+          })}
+        </div>
       </div>
 
       {/* Controls */}
@@ -735,20 +822,23 @@ export default function TeamworkMeter() {
       <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-5">
         <div className="mb-2 text-amber-300">יומן שינויים</div>
         <ul className="space-y-1 max-h-56 overflow-auto pr-1">
-          {log.map((entry, i) => {
-            const when = new Date(entry.ts || Date.now()).toLocaleString(
-              "he-IL",
-              { dateStyle: "short", timeStyle: "short", hour12: false }
-            );
-            return (
-              <li key={i} className="text-sm">
-                <span className="text-amber-400 mr-2">{when}</span>
-                {entry.delta > 0 ? "+" : ""}
-                {entry.delta} נק׳ → סה״כ{" "}
-                <span dir="ltr">{entry.newTotal}</span>
-              </li>
-            );
-          })}
+          {[...log]
+            .filter((e) => e && typeof e === "object")
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+            .map((entry, i) => {
+              const when = new Date(entry.ts || Date.now()).toLocaleString(
+                "he-IL",
+                { dateStyle: "short", timeStyle: "short", hour12: false }
+              );
+              return (
+                <li key={i} className="text-sm">
+                  <span className="text-amber-400 mr-2">{when}</span>
+                  {entry.delta > 0 ? "+" : ""}
+                  {entry.delta} נק׳ → סה״כ{" "}
+                  <span dir="ltr">{entry.newTotal}</span>
+                </li>
+              );
+            })}
         </ul>
       </div>
 
@@ -760,7 +850,7 @@ export default function TeamworkMeter() {
         addSoundRef={addSoundRef}
       />
 
-      {/* Footer: Team ID (עבר לתחתית) */}
+      {/* Footer: Team ID (בתחתית) */}
       <div className="text-center text-xs text-amber-400 mt-8">
         מזהה קבוצה: <span className="font-mono">{teamId}</span>
         <button
