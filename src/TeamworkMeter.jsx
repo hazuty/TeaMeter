@@ -2,9 +2,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-// ===== Firebase (קריאה/כתיבה לענן) =====
+// ===== Firebase =====
 import { db } from "./firebase";
-import { doc, setDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot,
+  serverTimestamp,
+  arrayUnion,
+} from "firebase/firestore";
 import { getAuth, onAuthStateChanged, signInAnonymously } from "firebase/auth";
 
 // ====== Game config ======
@@ -13,9 +20,8 @@ const STEP = 100;
 const MILESTONES = Array.from({ length: GOAL / STEP + 1 }, (_, i) => i * STEP);
 
 // ====== Images configuration ======
-// נתיב יחסי (ללא "/" בתחילת הנתיב) כדי שיעבוד מתת-נתיב ב-GitHub Pages
 const DRAGONS_BASE = "dragons-team-hazut";
-const DRAGON_EXT = "png"; // אם תהפוך ל-WebP, שנה ל-"webp"
+const DRAGON_EXT = "png";
 const USE_STAGE_NAMING = false;
 
 function imageForStage(stage) {
@@ -134,7 +140,6 @@ function MilestoneCelebration({ milestone, onDone }) {
   );
 }
 
-// ====== Confirm dialog ======
 function ConfirmDialog({
   open,
   title,
@@ -183,7 +188,6 @@ function ConfirmDialog({
   );
 }
 
-// ====== Sound controls ======
 function SoundControls({ unlockAudio, safePlay, soundEnabled, addSoundRef }) {
   return (
     <div className="flex justify-center gap-3 mt-4 mb-0">
@@ -211,40 +215,74 @@ function SoundControls({ unlockAudio, safePlay, soundEnabled, addSoundRef }) {
 }
 
 export default function TeamworkMeter() {
-  // מזהה "קבוצה/משפחה" – נשמר בלוקאל; אפשר להחליף לשם קבוע
-  const [teamId] = useState(() => {
-    const k = "tm_team_id";
-    const existing = localStorage.getItem(k);
-    if (existing) return existing;
-    const generated = "family-" + Math.random().toString(36).slice(2, 8);
-    localStorage.setItem(k, generated);
-    return generated;
+  // ===== Auth =====
+  const [uid, setUid] = useState(null);
+  useEffect(() => {
+    const auth = getAuth();
+    return onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUid(user.uid);
+      } else {
+        try {
+          const cred = await signInAnonymously(auth);
+          setUid(cred.user.uid);
+        } catch (e) {
+          console.warn("Anonymous sign-in failed:", e);
+        }
+      }
+    });
+  }, []);
+
+  // ===== Team ID from URL (?t=...) or LocalStorage =====
+  const [teamId, setTeamId] = useState(() => {
+    const KEY = "tm_team_id";
+    try {
+      const urlT = new URLSearchParams(window.location.search).get("t");
+      if (urlT) {
+        const clean = String(urlT).trim().slice(0, 40);
+        localStorage.setItem(KEY, clean);
+        return clean;
+      }
+      const saved = localStorage.getItem(KEY);
+      if (saved) return saved;
+    } catch {}
+    const gen = "family-" + Math.random().toString(36).slice(2, 8);
+    try {
+      localStorage.setItem("tm_team_id", gen);
+    } catch {}
+    return gen;
   });
 
+  // reflect teamId into URL so you can share the link
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    p.set("t", teamId);
+    const newUrl = `${window.location.pathname}?${p.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  }, [teamId]);
+
+  // ===== Local state =====
   const [points, setPoints] = useLocalStorage("tm_points", 0);
   const [log, setLog] = useLocalStorage("tm_log", []);
-  const [manualDelta, setManualDelta] = useState(0); // decrease
-  const [manualAdd, setManualAdd] = useState(0); // manual increase (requires 2s hold)
-  const [rewardNote, setRewardNote] = useState(""); // reward note
+  const [manualDelta, setManualDelta] = useState(0);
+  const [manualAdd, setManualAdd] = useState(0);
+  const [rewardNote, setRewardNote] = useState("");
   const [celebrating, setCelebrating] = useState(null);
 
-  // feet states via pointer (so we can hold)
+  // feet states
   const [leftDown, setLeftDown] = useState(false);
   const [rightDown, setRightDown] = useState(false);
-  const [coOpTriggered, setCoOpTriggered] = useState(false); // prevent repeated boost while holding
+  const [coOpTriggered, setCoOpTriggered] = useState(false);
   const [selectedBoost, setSelectedBoost] = useState(10);
   const [confirm, setConfirm] = useState(null);
   const [manualAddReady, setManualAddReady] = useState(false);
-
   const holdTimer = useRef(null);
 
-  // ====== Sounds ======
+  // ===== Sounds =====
   const addSoundRef = useRef(null);
   const milestoneSoundRef = useRef(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
-
   useEffect(() => {
-    // טוען קבצי MP3 מתוך public/sounds — נתיב יחסי!
     const a1 = new Audio("sounds/add-point.mp3");
     a1.preload = "auto";
     a1.volume = 0.7;
@@ -255,38 +293,83 @@ export default function TeamworkMeter() {
     a2.volume = 0.9;
     milestoneSoundRef.current = a2;
   }, []);
-
   const unlockAudio = () => setSoundEnabled(true);
-
   const safePlay = async (ref) => {
     const a = ref?.current;
     if (!a) return;
     try {
       a.currentTime = 0;
       await a.play();
-    } catch {
-      /* יתפוס NotAllowedError כשאין מחווה */
-    }
+    } catch {}
   };
 
+  // ===== Progress helpers =====
   const progressPct = Math.min(100, Math.round((points / GOAL) * 100));
   const nextMilestone = Math.min(GOAL, Math.ceil(points / STEP) * STEP);
   const toNext = Math.max(0, nextMilestone - points);
   const localPct = STEP === 0 ? 0 : Math.round(((points % STEP) / STEP) * 100);
 
+  // ===== Cloud realtime: listen & write =====
+  const applyingRemote = useRef(false);
+
+  // Realtime listener (pull)
+  useEffect(() => {
+    if (!teamId) return;
+    const ref = doc(db, "teams", teamId);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        applyingRemote.current = true;
+        if (typeof data.points === "number") setPoints(data.points);
+        if (Array.isArray(data.log)) setLog(data.log);
+        if (typeof data.rewardNote === "string") setRewardNote(data.rewardNote);
+        // שחרור הדגל אחרי טיק כדי שהשמירה המקומית לא תרוץ על עדכון מרחוק
+        setTimeout(() => (applyingRemote.current = false), 0);
+      },
+      (err) => console.warn("Snapshot error:", err)
+    );
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
+
+  // Auto-save (push) – מדלגים כשאנחנו מיישמים עדכון מרוחק
+  const saveTimer = useRef(null);
+  useEffect(() => {
+    if (!uid || !teamId || applyingRemote.current) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        const ref = doc(db, "teams", teamId);
+        await setDoc(
+          ref,
+          {
+            points,
+            log,
+            rewardNote,
+            updatedAt: serverTimestamp(),
+            members: arrayUnion(uid),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn("Auto-save failed:", e);
+      }
+    }, 800);
+    return () => clearTimeout(saveTimer.current);
+  }, [uid, teamId, points, log, rewardNote]);
+
+  // ===== Game logic =====
   const changePoints = (delta) => {
     if (!Number.isFinite(delta) || delta === 0) return;
-
-    // גבולות
     const prev = points;
     const next = Math.max(0, Math.min(GOAL, prev + delta));
     const applied = next - prev;
     if (applied === 0) return;
 
-    // "דינג" בכל התקדמות
     if (applied > 0) safePlay(addSoundRef);
 
-    // זיהוי חציית אבני־דרך (כולל דילוג מעל כמה)
     const crossed = [];
     if (STEP > 0) {
       const fromIdx = Math.floor(prev / STEP) + 1;
@@ -294,10 +377,8 @@ export default function TeamworkMeter() {
       for (let i = fromIdx; i <= toIdx; i++) crossed.push(i * STEP);
     }
 
-    // עדכון מצב
     setPoints(next);
     setLog((p) => [{ delta: applied, newTotal: next, ts: Date.now() }, ...p].slice(0, 100));
-
     if (crossed.length > 0) {
       safePlay(milestoneSoundRef);
       setCelebrating(crossed[0]);
@@ -313,7 +394,7 @@ export default function TeamworkMeter() {
     setCelebrating(null);
   };
 
-  // כאשר שתי הכפות לחוצות: בוסט חד-פעמי + טיימר ל-2ש׳ להוספה ידנית
+  // שתי הכפות
   useEffect(() => {
     if (leftDown && rightDown) {
       if (!coOpTriggered) {
@@ -328,57 +409,8 @@ export default function TeamworkMeter() {
       setCoOpTriggered(false);
     }
     return () => clearTimeout(holdTimer.current);
-  }, [leftDown, rightDown, selectedBoost, coOpTriggered]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ===== התחברות אנונימית כדי לאפשר כתיבה לכללים =====
-  const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => {
-    const auth = getAuth();
-    const unsub = onAuthStateChanged(auth, (u) => {
-      if (u) setSignedIn(true);
-      else signInAnonymously(auth).catch((e) => console.warn("Anon sign-in failed:", e));
-    });
-    if (!auth.currentUser) signInAnonymously(auth).catch(() => {});
-    return () => unsub();
-  }, []);
-
-  // ===== האזנה בזמן אמת למסמך Firestore כדי לעדכן ממכשירים אחרים =====
-  useEffect(() => {
-    const ref = doc(db, "teams", teamId);
-    const unsub = onSnapshot(ref, (snap) => {
-      if (!snap.exists()) return;
-      const data = snap.data();
-      if (typeof data.points === "number") setPoints(data.points);
-      if (Array.isArray(data.log)) setLog(data.log);
-      if (typeof data.rewardNote === "string") setRewardNote(data.rewardNote);
-    });
-    return () => unsub();
-  }, [teamId]);
-
-  // ====== שמירה אוטומטית לענן (עם debounce עדין) ======
-  const saveTimer = useRef(null);
-  useEffect(() => {
-    if (!signedIn) return; // אל תשמור לפני שיש משתמש אנונימי
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        const ref = doc(db, "teams", teamId);
-        await setDoc(
-          ref,
-          {
-            points,
-            log,
-            rewardNote,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      } catch (e) {
-        console.warn("Auto-save failed:", e);
-      }
-    }, 800); // שומר 0.8 שניות אחרי שינוי אחרון
-    return () => clearTimeout(saveTimer.current);
-  }, [teamId, points, log, rewardNote, signedIn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftDown, rightDown, selectedBoost, coOpTriggered]);
 
   return (
     <div
@@ -388,8 +420,19 @@ export default function TeamworkMeter() {
       <h1 className="text-3xl font-extrabold mb-1 text-center tracking-widest drop-shadow-[0_0_10px_#facc15]">
         כוח הצוות – מד שיתוף פעולה
       </h1>
+
       <div className="text-center text-sm text-amber-400 mb-5">
         מזהה קבוצה: <span className="font-mono">{teamId}</span>
+        <button
+          onClick={() =>
+            navigator.clipboard.writeText(
+              `${location.origin}${location.pathname}?t=${teamId}`
+            )
+          }
+          className="ml-2 px-2 py-1 rounded-xl bg-gray-700 text-amber-200 border border-amber-500"
+        >
+          העתק קישור
+        </button>
       </div>
 
       <div className="text-center mb-3 text-amber-300">
@@ -437,7 +480,10 @@ export default function TeamworkMeter() {
           <div className="relative h-8 w-full rounded-xl bg-gray-700 overflow-hidden shadow-inner">
             <motion.div
               className="h-full rounded-xl"
-              style={{ background: "linear-gradient(90deg,#f59e0b,#ef4444,#7c3aed)" }}
+              style={{
+                background:
+                  "linear-gradient(90deg,#f59e0b,#ef4444,#7c3aed)",
+              }}
               initial={false}
               animate={{ width: `${progressPct}%` }}
               transition={{ duration: 0.7, ease: "easeOut" }}
@@ -612,8 +658,7 @@ export default function TeamworkMeter() {
           {log.map((entry, i) => (
             <li key={i} className="text-sm">
               {entry.delta > 0 ? "+" : ""}
-              {entry.delta} נק׳ → סה״כ{" "}
-              <span dir="ltr">{entry.newTotal}</span>
+              {entry.delta} נק׳ → סה״כ <span dir="ltr">{entry.newTotal}</span>
             </li>
           ))}
         </ul>
