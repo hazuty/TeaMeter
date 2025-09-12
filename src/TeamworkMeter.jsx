@@ -296,6 +296,10 @@ export default function TeamworkMeter() {
   const [rewards, setRewards] = useState({}); // {"100": {reward:"", owner:""}, ...}
   const rewardsDirtyRef = useRef(false);
 
+  // ===== Collapsibles UI state =====
+  const [rewardsOpen, setRewardsOpen] = useState(false); // סגור כברירת מחדל
+  const [logOpen, setLogOpen] = useState(false);         // סגור כברירת מחדל
+
   // ===== Sounds =====
   const addSoundRef = useRef(null);
   const milestoneSoundRef = useRef(null);
@@ -368,7 +372,7 @@ export default function TeamworkMeter() {
 
   // ❌ ביטול autosave שהיה כותב נקודות/תגמול — כדי שצופה חדש לא ידרוס ערכים
   useEffect(() => {
-    // נשמר ריק מכוונה. נקודות נכתבות רק ב-changePoints; תגמולים נשמרים רק עם dirty flags.
+    // נשמר ריק בכוונה. נקודות נכתבות רק ב-changePoints; תגמולים נשמרים רק עם dirty flags.
   }, [uid, teamId, points, rewardNote, cloudReady]);
 
   // שמירת rewardNote אם הוקלד לפני cloudReady (ובהמשך רק על שינוי בפועל)
@@ -506,6 +510,18 @@ export default function TeamworkMeter() {
       : "") ||
     (rewardNote && rewardNote.trim()) ||
     "—";
+
+  // פריט יומן אחרון (לתצוגה כשהיומן סגור)
+  const latestLog = useMemo(() => {
+    const arr = [...(log || [])]
+      .filter((e) => e && typeof e === "object")
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return arr[0] || null;
+  }, [log]);
+
+  // שורה מקוצרת לטבלת תגמולים (האבן הקרובה או 100 אם אתם על 0)
+  const summaryMilestone = nextMilestone === 0 ? STEP : nextMilestone;
+  const summaryRow = rewards?.[String(summaryMilestone)] || { reward: "", owner: "" };
 
   return (
     <div
@@ -744,58 +760,92 @@ export default function TeamworkMeter() {
         />
       </div>
 
-      {/* Rewards Table (לפני היומן) */}
+      {/* Rewards Table — COLLAPSIBLE */}
       <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-4 mb-5">
-        <div className="mb-2 text-amber-300">טבלת תגמולים לפי אבני דרך</div>
-        <div className="grid grid-cols-[80px_1fr_140px] gap-2 items-center text-sm">
-          <div className="text-amber-400 font-semibold">אבן דרך</div>
-          <div className="text-amber-400 font-semibold">תגמול</div>
-          <div className="text-amber-400 font-semibold">אחראי</div>
+        <button
+          onClick={() => setRewardsOpen((v) => !v)}
+          className="w-full flex items-center justify-between text-amber-300"
+        >
+          <span className="font-semibold">טבלת תגמולים לפי אבני דרך</span>
+          <span className={`transition-transform ${rewardsOpen ? "rotate-90" : ""}`}>▸</span>
+        </button>
 
-          {MILESTONES.filter((m) => m > 0).map((m) => {
-            const key = String(m);
-            const row = rewards?.[key] || {};
-            return (
-              <React.Fragment key={m}>
-                <div className="text-amber-200" dir="ltr">
-                  {m}
-                </div>
-                <input
-                  type="text"
-                  value={row.reward ?? ""}
-                  onChange={(e) => {
-                    if (readOnly) return;
-                    const v = e.target.value;
-                    setRewards((prev) => ({
-                      ...prev,
-                      [key]: { ...prev[key], reward: v || "" },
-                    }));
-                    rewardsDirtyRef.current = true;
-                  }}
-                  placeholder="לדוגמה: סרט/חטיף/טיול קטן"
-                  disabled={readOnly}
-                  className={`w-full rounded-xl border border-amber-500/40 bg-gray-900 text-amber-100 px-3 py-1 ${readOnly ? "opacity-60" : ""}`}
-                />
-                <input
-                  type="text"
-                  value={row.owner ?? ""}
-                  onChange={(e) => {
-                    if (readOnly) return;
-                    const v = e.target.value;
-                    setRewards((prev) => ({
-                      ...prev,
-                      [key]: { ...prev[key], owner: v || "" },
-                    }));
-                    rewardsDirtyRef.current = true;
-                  }}
-                  placeholder="לדוגמה: אבא / אמא / שניכם"
-                  disabled={readOnly}
-                  className={`w-full rounded-xl border border-amber-500/40 bg-gray-900 text-amber-100 px-3 py-1 ${readOnly ? "opacity-60" : ""}`}
-                />
-              </React.Fragment>
-            );
-          })}
-        </div>
+        {/* סיכום קצר כשהטבלה סגורה */}
+        {!rewardsOpen && (
+          <div className="mt-3 grid grid-cols-[80px_1fr_140px] gap-2 items-center text-sm">
+            <div className="text-amber-400 font-semibold">אבן דרך</div>
+            <div className="text-amber-400 font-semibold">תגמול</div>
+            <div className="text-amber-400 font-semibold">אחראי</div>
+
+            <div className="text-amber-200" dir="ltr">{summaryMilestone}</div>
+            <div className="text-amber-100">{summaryRow.reward || nextRewardText}</div>
+            <div className="text-amber-100">{summaryRow.owner || "—"}</div>
+          </div>
+        )}
+
+        {/* תוכן מלא כשהטבלה פתוחה */}
+        <AnimatePresence initial={false}>
+          {rewardsOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              style={{ overflow: "hidden" }}
+              className="mt-3"
+            >
+              <div className="grid grid-cols-[80px_1fr_140px] gap-2 items-center text-sm">
+                <div className="text-amber-400 font-semibold">אבן דרך</div>
+                <div className="text-amber-400 font-semibold">תגמול</div>
+                <div className="text-amber-400 font-semibold">אחראי</div>
+
+                {MILESTONES.filter((m) => m > 0).map((m) => {
+                  const key = String(m);
+                  const row = rewards?.[key] || {};
+                  return (
+                    <React.Fragment key={m}>
+                      <div className="text-amber-200" dir="ltr">
+                        {m}
+                      </div>
+                      <input
+                        type="text"
+                        value={row.reward ?? ""}
+                        onChange={(e) => {
+                          if (readOnly) return;
+                          const v = e.target.value;
+                          setRewards((prev) => ({
+                            ...prev,
+                            [key]: { ...prev[key], reward: v || "" },
+                          }));
+                          rewardsDirtyRef.current = true;
+                        }}
+                        placeholder="לדוגמה: סרט/חטיף/טיול קטן"
+                        disabled={readOnly}
+                        className={`w-full rounded-xl border border-amber-500/40 bg-gray-900 text-amber-100 px-3 py-1 ${readOnly ? "opacity-60" : ""}`}
+                      />
+                      <input
+                        type="text"
+                        value={row.owner ?? ""}
+                        onChange={(e) => {
+                          if (readOnly) return;
+                          const v = e.target.value;
+                          setRewards((prev) => ({
+                            ...prev,
+                            [key]: { ...prev[key], owner: v || "" },
+                          }));
+                          rewardsDirtyRef.current = true;
+                        }}
+                        placeholder="לדוגמה: אבא / אמא / שניכם"
+                        disabled={readOnly}
+                        className={`w-full rounded-xl border border-amber-500/40 bg-gray-900 text-amber-100 px-3 py-1 ${readOnly ? "opacity-60" : ""}`}
+                      />
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Controls — מוצג רק כשלא בצפייה */}
@@ -837,28 +887,70 @@ export default function TeamworkMeter() {
         </div>
       )}
 
-      {/* Change log */}
+      {/* Change log — COLLAPSIBLE */}
       <div className="bg-gray-800/70 rounded-2xl border border-amber-500 p-5">
-        <div className="mb-2 text-amber-300">יומן שינויים</div>
-        <ul className="space-y-1 max-h-56 overflow-auto pr-1">
-          {[...log]
-            .filter((e) => e && typeof e === "object")
-            .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-            .map((entry, i) => {
-              const when = new Date(entry.ts || Date.now()).toLocaleString(
-                "he-IL",
-                { dateStyle: "short", timeStyle: "short", hour12: false }
-              );
-              return (
-                <li key={i} className="text-sm">
-                  <span className="text-amber-400 mr-2">{when}</span>
-                  {entry.delta > 0 ? "+" : ""}
-                  {entry.delta} נק׳ → סה״כ{" "}
-                  <span dir="ltr">{entry.newTotal}</span>
-                </li>
-              );
-            })}
-        </ul>
+        <button
+          onClick={() => setLogOpen((v) => !v)}
+          className="w-full flex items-center justify-between text-amber-300 mb-2"
+        >
+          <span className="font-semibold">יומן שינויים</span>
+          <span className={`transition-transform ${logOpen ? "rotate-90" : ""}`}>▸</span>
+        </button>
+
+        {/* שורה אחרונה בלבד כשהיומן סגור */}
+        {!logOpen && (
+          <ul className="space-y-1">
+            {latestLog ? (
+              <li className="text-sm">
+                <span className="text-amber-400 mr-2">
+                  {new Date(latestLog.ts || Date.now()).toLocaleString("he-IL", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                    hour12: false,
+                  })}
+                </span>
+                {latestLog.delta > 0 ? "+" : ""}
+                {latestLog.delta} נק׳ → סה״כ{" "}
+                <span dir="ltr">{latestLog.newTotal}</span>
+              </li>
+            ) : (
+              <li className="text-sm text-amber-400">אין עדיין רשומות.</li>
+            )}
+          </ul>
+        )}
+
+        {/* תוכן מלא כשהיומן פתוח */}
+        <AnimatePresence initial={false}>
+          {logOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              style={{ overflow: "hidden" }}
+            >
+              <ul className="space-y-1 max-h-56 overflow-auto pr-1 mt-2">
+                {[...log]
+                  .filter((e) => e && typeof e === "object")
+                  .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+                  .map((entry, i) => {
+                    const when = new Date(entry.ts || Date.now()).toLocaleString(
+                      "he-IL",
+                      { dateStyle: "short", timeStyle: "short", hour12: false }
+                    );
+                    return (
+                      <li key={i} className="text-sm">
+                        <span className="text-amber-400 mr-2">{when}</span>
+                        {entry.delta > 0 ? "+" : ""}
+                        {entry.delta} נק׳ → סה״כ{" "}
+                        <span dir="ltr">{entry.newTotal}</span>
+                      </li>
+                    );
+                  })}
+              </ul>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 🔊 Sound controls */}
